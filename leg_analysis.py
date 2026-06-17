@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, resample
 
 # =====================================================================
 # 1. PARAMETERS & CONFIGURATION
@@ -17,8 +17,20 @@ target_segment = 'rt-ll'
 quat_cols = [f'{target_segment}x', f'{target_segment}y',
              f'{target_segment}z', f'{target_segment}w']
 
+# List of 10 actual physical sensor modules to track integrity
+body_segments = [
+    'rt-ua', 'rt-fa', 'rt-th', 'rt-ll', 'rt-ft',
+    'lt-ua', 'lt-fa', 'lt-th', 'lt-ll', 'lt-ft'
+]
+
 # Master list to accumulate spreadsheet rows
 compiled_results = []
+
+# Dictionary to collect resampled pitch signals globally across all subjects for Trend Plots
+STANDARD_LENGTH = 500
+global_trends = {'LS': [], 'HT': [], 'OB': [], 'TD': []}
+gait_labels = {'LS': 'Level Surf',
+               'HT': 'H Turns', 'OB': 'Obstacle', 'TD': 'Tandem'}
 
 # =====================================================================
 # 2. SEQUENTIAL FOLDER LOOP (N01 to N47)
@@ -40,13 +52,10 @@ while n < 48:
     file_pattern = os.path.join(folder_path, "*.txt")
     subject_files = glob.glob(file_pattern)
 
-    # Dictionary to store pitch profiles for this subject's final single comparison plot
-    subject_plots_data = {}
-
     # --- Loop through subfiles (HT, LS, OB, TD) ---
     for file_path in sorted(subject_files):
         file_name = os.path.basename(file_path)
-        task_type = os.path.splitext(file_name)[0].split('-')[-1]
+        task_type = os.path.splitext(file_name)[0].split('-')[-1].upper()
 
         try:
             df = pd.read_csv(file_path, sep=r'\s+')
@@ -55,6 +64,7 @@ while n < 48:
             continue
 
         if not all(col in df.columns for col in quat_cols):
+            print(f"   ⚠️ Skipping: Missing sensor columns in {file_name}")
             continue
 
         # --- Step A: Missing Data Check & Imputation ---
@@ -62,28 +72,36 @@ while n < 48:
         if total_missing > 0:
             df = df.interpolate(method='linear').bfill()
 
-        # --- NEW REQUIREMENT: Identify Inactive Sensors via Variance ---
-        # Find columns where variance is near-zero (dead/inactive sensors)
+        # --- UPDATE: Identify Inactive Sensors by Whole Body Segment Modules ---
         variances = df.var()
-        inactive_cols = variances[variances < 0.001].index.tolist()
+        inactive_segments = []
+
+        for seg in body_segments:
+            segment_cols = [f'{seg}x', f'{seg}y', f'{seg}z', f'{seg}w']
+            seg_vars = [variances.get(col, 0) for col in segment_cols]
+
+            # If ALL 4 quaternion axes for a segment have variance < 0.001, it's inactive
+            if all(v < 0.001 for v in seg_vars):
+                inactive_segments.append(seg)
+
         inactive_sensors_string = ", ".join(
-            inactive_cols) if inactive_cols else "None"
+            inactive_segments) if inactive_segments else "None"
 
-        # --- NEW REQUIREMENT: Calculate Time by Dividing Rows by 59 ---
+        # --- Step B: Calculate Time by Dividing Rows by 59 ---
         total_rows = len(df)
-        total_duration = total_rows / 59.0  # Dynamic time allocation
-        sampling_rate_calculated = 59.0     # Effective Hz
+        total_duration = total_rows / 59.0
+        sampling_rate_calculated = 59.0
 
-        # --- Step B: Quaternion to Euler Conversion ---
+        # --- Step C: Quaternion to Euler Conversion ---
         q_right = df[['rt-llx', 'rt-lly', 'rt-llz', 'rt-llw']].to_numpy()
         pitch_r = R.from_quat(q_right / np.linalg.norm(q_right,
                               axis=1, keepdims=True)).as_euler('xyz', degrees=True)[:, 1]
 
-        # Store pitch signal for the final overlay visualization matrix
-        subject_plots_data[task_type] = pitch_r
+        # Append resampled clean data to global repository for the master trend visualization
+        if task_type in global_trends:
+            global_trends[task_type].append(resample(pitch_r, STANDARD_LENGTH))
 
-        # --- Step C: Peak Detection & Feature Extraction ---
-        # Lowered distance threshold for 59Hz scaling
+        # --- Step D: Peak Detection & Feature Extraction ---
         peaks_r, _ = find_peaks(pitch_r, distance=25, prominence=5)
         valleys_r, _ = find_peaks(-pitch_r, distance=25, prominence=5)
 
@@ -111,7 +129,7 @@ while n < 48:
             double_support = double_support_sum / total_duration
             avg_swing = np.mean(swing_phases)
 
-            # Save metrics AND inactive sensor classifications to list
+            # Save metrics AND module-level inactive sensor data to master list
             compiled_results.append({
                 'Subject': subject_str,
                 'Task': task_type,
@@ -122,39 +140,55 @@ while n < 48:
                 'Cadence_steps_min': round(cadence, 2),
                 'Double_Support_Ratio': round(double_support, 3),
                 'Swing_Phase_sec': round(avg_swing, 3),
-                'Inactive_Sensors_Count': len(inactive_cols),
+                'Inactive_Sensors_Count': len(inactive_segments),
                 'Inactive_Sensors_List': inactive_sensors_string
             })
             print(
-                f"   ✅ Processed {task_type}: {total_rows} rows ➔ {total_duration:.2f}s. Inactive found: {len(inactive_cols)}")
+                f"   ✅ Processed {task_type}: {total_rows} rows ➔ {total_duration:.2f}s. Inactive Modules: {len(inactive_segments)}")
 
-    # =====================================================================
-    # 3. NEW REQUIREMENT: VISUALIZE EACH GAIT TYPE IN A SINGLE OVALY PLOT
-    # =====================================================================
-    if subject_plots_data:
-        plt.figure(figsize=(11, 5))
+    n += 1
 
-        # Layer each available gait task onto one single canvas context
-        for task_suffix, pitch_signal in subject_plots_data.items():
-            # Plot up to 300 frames so variations are easy to see close up
-            plt.plot(
-                pitch_signal[:300], label=f"Task: {task_suffix}", linewidth=2, alpha=0.8)
+# =====================================================================
+# 3. NEW REQUIREMENT: MASTER GLOBAL COHORT TREND OVERLAY PLOT
+# =====================================================================
+print("\n" + "=" * 75)
+print("📊 GENERATING UNIFIED COHORT TREND GRAPH")
+print("=" * 75)
 
-        plt.title(
-            f"Gait Type Comparison Matrix - Subject {subject_str}", fontsize=12, fontweight='bold')
-        plt.xlabel("Normalized Time Frames (59 Hz Local Scale)")
-        plt.ylabel("Lower Leg Pitch Angle (Degrees)")
-        plt.grid(True, linestyle='--', alpha=0.5)
-        plt.legend(loc='upper right')
+plt.figure(figsize=(13, 6.5))
+colors = {'LS': '#1f77b4', 'HT': '#ff7f0e', 'OB': '#2ca02c', 'TD': '#d62728'}
+time_percent = np.linspace(0, 100, STANDARD_LENGTH)
 
-        os.makedirs('gait_comparisons', exist_ok=True)
-        plt.savefig(
-            f'gait_comparisons/{subject_str}_gait_comparison.png', bbox_inches='tight')
-        plt.close()
-        print(
-            f"   📊 Saved single multi-gait visualization chart for {subject_str}.")
+for task_suffix, label in gait_labels.items():
+    data_matrix = np.array(global_trends[task_suffix])
 
-    n += 1  # Move to next folder numbers
+    if len(data_matrix) == 0:
+        continue
+
+    # Calculate group mean trend and standard deviation ribbon
+    mean_waveform = np.mean(data_matrix, axis=0)
+    std_waveform = np.std(data_matrix, axis=0)
+
+    # Plot solid mean path line
+    plt.plot(time_percent, mean_waveform,
+             label=f'{label} (Trend, n={len(data_matrix)})', color=colors[task_suffix], linewidth=2.5)
+    # Fill standard deviation uncertainty band
+    plt.fill_between(time_percent, mean_waveform - std_waveform,
+                     mean_waveform + std_waveform, color=colors[task_suffix], alpha=0.15)
+
+plt.title("Universal Gait Type Fingerprints: Cohort Population Trends (N01 - N47)",
+          fontsize=13, fontweight='bold')
+plt.xlabel("Gait Trial Progress Timeline (%)", fontsize=11)
+plt.ylabel("Lower Leg Pitch Angle (Degrees)", fontsize=11)
+plt.xlim(0, 100)
+plt.grid(True, linestyle='--', alpha=0.5)
+plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left',
+           fontsize=10, borderaxespad=0)
+plt.subplots_adjust(right=0.80)
+
+plt.savefig('Global_Gait_Type_Trends.png', dpi=300, bbox_inches='tight')
+plt.show()
+print("   ✅ Consolidated 'Global_Gait_Type_Trends.png' exported successfully.")
 
 # =====================================================================
 # 4. EXPORT MASTER EXCEL DATABASE
@@ -169,5 +203,4 @@ summary_df.to_excel(excel_output_path, index=False,
                     sheet_name='Gait Parameters')
 
 print(f"✨ Success! Summary compiled for {len(summary_df)} active subfiles.")
-print(
-    f"📁 Spreadsheet updated with inactive sensors & 59Hz duration math: '{excel_output_path}'")
+print(f"📁 Master Spreadsheet saved: '{excel_output_path}'")
