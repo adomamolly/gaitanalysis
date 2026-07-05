@@ -1,0 +1,6 @@
+Model Name,Accuracy Metric
+Random Forest,0.75
+Support Vector Machine,0.75
+Multilayer Perceptron (MLP),0.75
+1D CNN,0.6875
+LSTM,0.5
