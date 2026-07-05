@@ -39,10 +39,7 @@ df_ml[feature_cols] = df_ml[feature_cols].fillna(df_ml[feature_cols].mean())
 binary_pairs = [
     ['HT', 'LS'],
     ['HT', 'OB'],
-    ['HT', 'TD'],
     ['LS', 'OB'],
-    ['LS', 'TD'],
-    ['OB', 'TD']
 ]
 
 # Master storage for results
