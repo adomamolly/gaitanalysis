@@ -70,15 +70,16 @@ for pair in binary_pairs:
     y_train_nn = to_categorical(y_train, num_classes=2)
     y_test_nn = to_categorical(y_test, num_classes=2)
 
-    # 1. Random Forest
-    rf = RandomForestClassifier(n_estimators=150, max_depth=6, random_state=42)
-    rf.fit(X_train, y_train)
-    rf_acc = accuracy_score(y_test, rf.predict(X_test))
-
-    # 2. SVM
-    svm = SVC(kernel='rbf', C=5.0, random_state=42)
+    # 1. SVM
+    svm = SVC(kernel='poly', C=2.0, random_state=42)
     svm.fit(X_train_scaled, y_train)
     svm_acc = accuracy_score(y_test, svm.predict(X_test_scaled))
+
+    # 2. Random Forest
+    rf = RandomForestClassifier(
+        n_estimators=250, max_depth=5, random_state=42)
+    rf.fit(X_train, y_train)
+    rf_acc = accuracy_score(y_test, rf.predict(X_test))
 
     # 3. MLP
     mlp = Sequential([
