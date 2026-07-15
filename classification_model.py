@@ -67,57 +67,93 @@ for pair in binary_pairs:
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    y_train_nn = to_categorical(y_train, num_classes=2)
-    y_test_nn = to_categorical(y_test, num_classes=2)
-
-    # 1. SVM
-    svm = SVC(kernel='poly', C=2.0, random_state=42)
-    svm.fit(X_train_scaled, y_train)
-    svm_acc = accuracy_score(y_test, svm.predict(X_test_scaled))
-
-    # 2. Random Forest
-    rf = RandomForestClassifier(
-        n_estimators=250, max_depth=5, random_state=42)
+    # =====================================================================
+    # 1. RANDOM FOREST TRAINING & CONFUSION MATRIX GENERATION
+    # =====================================================================
+    rf = RandomForestClassifier(n_estimators=150, max_depth=6, random_state=42)
     rf.fit(X_train, y_train)
-    rf_acc = accuracy_score(y_test, rf.predict(X_test))
 
-    # 3. MLP
-    mlp = Sequential([
-        Dense(16, activation='relu', input_shape=(5,)),
-        Dropout(0.1),
-        Dense(8, activation='relu'),
-        Dense(2, activation='softmax')
-    ])
-    mlp.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-                loss='categorical_crossentropy', metrics=['accuracy'])
-    mlp.fit(X_train_scaled, y_train_nn, epochs=100, batch_size=4, verbose=0)
-    mlp_acc = accuracy_score(y_test, np.argmax(
-        mlp.predict(X_test_scaled, verbose=0), axis=1))
+    # Get predictions
+    rf_preds = rf.predict(X_test)
+    rf_acc = accuracy_score(y_test, rf_preds)
 
-    # 4. 1D CNN
-    X_train_cnn = np.expand_dims(X_train_scaled, axis=-1)
-    X_test_cnn = np.expand_dims(X_test_scaled, axis=-1)
-    cnn = Sequential([
-        Conv1D(8, kernel_size=2, activation='relu', input_shape=(5, 1)),
-        MaxPooling1D(pool_size=2),
-        Flatten(),
-        Dense(8, activation='relu'),
-        Dense(2, activation='softmax')
-    ])
-    cnn.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-                loss='categorical_crossentropy', metrics=['accuracy'])
-    cnn.fit(X_train_cnn, y_train_nn, epochs=100, batch_size=4, verbose=0)
-    cnn_acc = accuracy_score(y_test, np.argmax(
-        cnn.predict(X_test_cnn, verbose=0), axis=1))
+    # Generate Confusion Matrix for this specific pair
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from sklearn.metrics import confusion_matrix
+
+    cm_rf = confusion_matrix(y_test, rf_preds)
+
+    # Set up the plot aesthetics
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(
+        cm_rf,
+        annot=True,
+        fmt='d',
+        cmap='Greens',  # Forest green theme to easily distinguish it from the SVM plots
+        xticklabels=label_encoder.classes_,
+        yticklabels=label_encoder.classes_
+    )
+
+    # Add clear slide titles and labels
+    plt.title(f'Random Forest Confusion Matrix: {pair[0]} vs {pair[1]}')
+    plt.xlabel('Predicted Task')
+    plt.ylabel('True Task')
+    plt.tight_layout()
+
+    # Save the file automatically with a unique name based on the pair
+    filename_rf = f"confusion_matrix_RF_{pair[0]}_vs_{pair[1]}.png"
+    plt.savefig(filename_rf, dpi=300)
+    plt.close()  # Clear memory
+
+    print(f"🌲 Saved Random Forest graphic as: '{filename_rf}'")
 
     # Store results for this pair
     all_pair_results.append({
         'Comparison Pair': f"{pair[0]} vs {pair[1]}",
         'Random Forest': rf_acc,
-        'SVM': svm_acc,
-        'MLP (Neural Net)': mlp_acc,
-        '1D CNN': cnn_acc
     })
+
+    # =====================================================================
+    # 2. SVM TRAINING & CONFUSION MATRIX GENERATION
+    # =====================================================================
+    svm = SVC(kernel='rbf', C=5.0, random_state=42)
+    svm.fit(X_train_scaled, y_train)
+
+    # Get predictions
+    svm_preds = svm.predict(X_test_scaled)
+    svm_acc = accuracy_score(y_test, svm_preds)
+
+    # Generate Confusion Matrix for this specific pair
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from sklearn.metrics import confusion_matrix
+
+    cm = confusion_matrix(y_test, svm_preds)
+
+    # Set up the plot aesthetics
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt='d',
+        cmap='Purples',  # Sleek purple theme to stand out in your slides
+        xticklabels=label_encoder.classes_,
+        yticklabels=label_encoder.classes_
+    )
+
+    # Add clear slide titles and labels
+    plt.title(f'SVM Confusion Matrix: {pair[0]} vs {pair[1]}')
+    plt.xlabel('Predicted Task')
+    plt.ylabel('True Task')
+    plt.tight_layout()
+
+    # Save the file automatically with a unique name based on the pair
+    filename = f"confusion_matrix_{pair[0]}_vs_{pair[1]}.png"
+    plt.savefig(filename, dpi=300)
+    plt.close()  # Close the plot to clear system memory for the next loop run
+
+    print(f"🖼️ Saved confusion matrix graphic as: '{filename}'")
 
 # Convert to DataFrame and show final table
 master_results_df = pd.DataFrame(all_pair_results)
